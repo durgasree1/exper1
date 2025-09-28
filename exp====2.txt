@@ -1,0 +1,353 @@
+exp====2
+
+import java.util.*;
+import java.util.concurrent.*;
+
+// ---------------------- Domain classes ----------------------
+/**
+ * Simple Message record
+ */
+class Message {
+    public final String fromUser;
+    public final String to; // room id or recipient username for private
+    public final String text;
+    public final boolean isPrivate;
+    public final Date time;
+
+    Message(String fromUser, String to, String text, boolean isPrivate) {
+        this.fromUser = fromUser;
+        this.to = to;
+        this.text = text;
+        this.isPrivate = isPrivate;
+        this.time = new Date();
+    }
+
+    @Override
+    public String toString() {
+        String prefix = isPrivate ? "[private]" : "";
+        String target = isPrivate ? ("->" + to) : ("#" + to);
+        return String.format("%s %s %s: %s", prefix, target, fromUser, text);
+    }
+}
+
+// ---------------------- Observer Pattern Interfaces ----------------------
+/**
+ * Observer (client) interface
+ */
+interface ClientObserver {
+    void receive(Message msg);         // called when chatroom posts a message
+    String getUsername();
+}
+
+/**
+ * Subject interface for ChatRoom
+ */
+interface ChatRoomSubject {
+    void registerClient(ClientObserver client);
+    void unregisterClient(ClientObserver client);
+    void postMessage(Message msg);   // broadcast or private handled inside
+    Set<String> activeUsers();
+    List<Message> history();         // read message history
+}
+
+// ---------------------- ChatRoom (Subject) ----------------------
+/**
+ * ChatRoom: maintains observers (clients), message history, and notifies clients.
+ * Implements the Observer pattern: clients register to receive updates.
+ */
+class ChatRoom implements ChatRoomSubject {
+    private final String roomId;
+    private final Map<String, ClientObserver> clients = new ConcurrentHashMap<>();
+    private final List<Message> messageHistory = Collections.synchronizedList(new ArrayList<>());
+
+    ChatRoom(String roomId) {
+        this.roomId = roomId;
+    }
+
+    public String getRoomId() { return roomId; }
+
+    @Override
+    public void registerClient(ClientObserver client) {
+        clients.put(client.getUsername(), client);
+        Message joinMsg = new Message("System", roomId, client.getUsername() + " joined the room", false);
+        messageHistory.add(joinMsg);
+        notifyAllClients(joinMsg);
+    }
+
+    @Override
+    public void unregisterClient(ClientObserver client) {
+        clients.remove(client.getUsername());
+        Message leaveMsg = new Message("System", roomId, client.getUsername() + " left the room", false);
+        messageHistory.add(leaveMsg);
+        notifyAllClients(leaveMsg);
+    }
+
+    @Override
+    public void postMessage(Message msg) {
+        messageHistory.add(msg);
+        if (msg.isPrivate) {
+            // deliver only to recipient and sender if they are in room
+            ClientObserver recipient = clients.get(msg.to);
+            ClientObserver sender = clients.get(msg.fromUser);
+            if (recipient != null) recipient.receive(msg);
+            if (sender != null && sender != recipient) sender.receive(msg);
+        } else {
+            // broadcast
+            notifyAllClients(msg);
+        }
+    }
+
+    private void notifyAllClients(Message msg) {
+        for (ClientObserver c : clients.values()) {
+            // notify each client asynchronously to simulate real-time deliveries
+            // (here simple thread pool used; in real app this would be network pushes)
+            ExecutorService es = Executors.newSingleThreadExecutor();
+            es.submit(() -> c.receive(msg));
+            es.shutdown();
+        }
+    }
+
+    @Override
+    public Set<String> activeUsers() {
+        return new HashSet<>(clients.keySet());
+    }
+
+    @Override
+    public List<Message> history() {
+        return new ArrayList<>(messageHistory);
+    }
+}
+
+// ---------------------- Singleton ChatRoomManager ----------------------
+/**
+ * ChatRoomManager: Singleton responsible for creating and retrieving chat rooms.
+ * Shows the Creational Singleton pattern.
+ */
+class ChatRoomManager {
+    private static ChatRoomManager instance;
+    private final Map<String, ChatRoom> rooms = new ConcurrentHashMap<>();
+
+    private ChatRoomManager() {}
+
+    public static synchronized ChatRoomManager getInstance() {
+        if (instance == null) instance = new ChatRoomManager();
+        return instance;
+    }
+
+    public ChatRoom getOrCreateRoom(String roomId) {
+        return rooms.computeIfAbsent(roomId, ChatRoom::new);
+    }
+
+    public Optional<ChatRoom> getRoom(String roomId) {
+        return Optional.ofNullable(rooms.get(roomId));
+    }
+
+    public Collection<ChatRoom> allRooms() {
+        return rooms.values();
+    }
+}
+
+// ---------------------- Adapter Pattern: CommunicationAdapter ----------------------
+/**
+ * CommunicationAdapter: Structural adapter interface that adapts chat server messages to a client's
+ * communication mechanism (WebSocket, HTTP long-polling, etc.)
+ *
+ * In this simulated program these adapters simply call client's "deliver*" methods, but the idea
+ * is that they could translate to WebSocket frames, HTTP responses, or push notifications.
+ */
+interface CommunicationAdapter {
+    void deliverMessage(ClientObserver client, Message msg);
+}
+
+/**
+ * WebSocketAdapter: simulates delivering messages over WebSocket-like channel
+ */
+class WebSocketAdapter implements CommunicationAdapter {
+    @Override
+    public void deliverMessage(ClientObserver client, Message msg) {
+        // adapt the message -> "websocket frame"
+        // here we simulate by calling receive
+        System.out.printf("[WebSocketAdapter] Sending WS frame to %s\n", client.getUsername());
+        client.receive(msg);
+    }
+}
+
+/**
+ * HttpAdapter: simulates delivering messages over HTTP (e.g., long polling)
+ */
+class HttpAdapter implements CommunicationAdapter {
+    @Override
+    public void deliverMessage(ClientObserver client, Message msg) {
+        // adapt message -> HTTP push simulation
+        System.out.printf("[HttpAdapter] Sending HTTP push to %s\n", client.getUsername());
+        client.receive(msg);
+    }
+}
+
+// ---------------------- ChatClient (Observer) ----------------------
+/**
+ * ChatClient implements ClientObserver, holds an adapter so the system communicates to it
+ * via the adapter (Structural pattern). Supports private messaging and message send.
+ */
+class ChatClient implements ClientObserver {
+    private final String username;
+    private final CommunicationAdapter adapter;
+    private ChatRoom joinedRoom; // the room currently joined (could be multiple in extension)
+    // In a real app, the client would maintain a local socket/web UI; here we simulate prints
+
+    ChatClient(String username, CommunicationAdapter adapter) {
+        this.username = username;
+        this.adapter = adapter;
+    }
+
+    public String getUsername() { return username; }
+
+    // connect to a room
+    public void joinRoom(String roomId) {
+        ChatRoom room = ChatRoomManager.getInstance().getOrCreateRoom(roomId);
+        room.registerClient(this);
+        this.joinedRoom = room;
+        // show history on join
+        System.out.println("[" + username + "] Joined " + roomId + ". History:");
+        for (Message m : room.history()) {
+            System.out.println("  " + m);
+        }
+    }
+
+    public void leaveRoom() {
+        if (joinedRoom != null) {
+            joinedRoom.unregisterClient(this);
+            System.out.println("[" + username + "] Left " + joinedRoom.getRoomId());
+            joinedRoom = null;
+        }
+    }
+
+    // send a public message
+    public void sendMessage(String text) {
+        if (joinedRoom == null) {
+            System.out.println("[" + username + "] Not in a room.");
+            return;
+        }
+        Message msg = new Message(username, joinedRoom.getRoomId(), text, false);
+        joinedRoom.postMessage(msg);
+    }
+
+    // send a private message to another user in same room
+    public void sendPrivateMessage(String toUser, String text) {
+        if (joinedRoom == null) {
+            System.out.println("[" + username + "] Not in a room.");
+            return;
+        }
+        Message pm = new Message(username, toUser, text, true);
+        joinedRoom.postMessage(pm);
+    }
+
+    // This method is called by ChatRoom when a message (broadcast or private) arrives.
+    // Instead of directly doing the output, we pass through the adapter to show structural adaptation.
+    @Override
+    public void receive(Message msg) {
+        // the adapter is responsible for the "transport" — simulate it
+        // In real environment adapter would translate and send the payload over network; here it calls back.
+        adapter.deliverMessage(this, msg); // careful: this would cause loop if adapters call receive; adapters should invoke client's deliver* method instead
+        // To avoid infinite recursion in our simulation, adapters call client's deliver* method, but in above adapter we incorrectly call receive()
+        // To avoid recursion, adapters in this simplified demo print a line and directly print message below.
+        // So we implement a real deliver method below.
+    }
+
+    // deliver invoked by adapter (we'll call this from adapter implementations to avoid recursion)
+    public void deliver(Message msg) {
+        // render message to client console
+        if (msg.isPrivate) {
+            if (msg.fromUser.equals(this.username)) {
+                // sender sees their private message sent
+                System.out.printf("[%s - private to %s] %s\n", username, msg.to, msg.text);
+            } else if (msg.to.equals(this.username)) {
+                // recipient sees private message
+                System.out.printf("[%s - private from %s] %s\n", username, msg.fromUser, msg.text);
+            }
+        } else {
+            System.out.printf("[%s - room %s] %s: %s\n", username, msg.to, msg.fromUser, msg.text);
+        }
+    }
+}
+
+// Fix adapters to call deliver() instead of receive() to avoid recursion:
+class WebSocketAdapterFixed implements CommunicationAdapter {
+    @Override
+    public void deliverMessage(ClientObserver client, Message msg) {
+        System.out.printf("[WebSocketAdapter] WS frame -> %s\n", client.getUsername());
+        if (client instanceof ChatClient) {
+            ((ChatClient) client).deliver(msg);
+        }
+    }
+}
+class HttpAdapterFixed implements CommunicationAdapter {
+    @Override
+    public void deliverMessage(ClientObserver client, Message msg) {
+        System.out.printf("[HttpAdapter] HTTP push -> %s\n", client.getUsername());
+        if (client instanceof ChatClient) {
+            ((ChatClient) client).deliver(msg);
+        }
+    }
+}
+
+// ---------------------- Demo Main ----------------------
+/**
+ * ChatAppDemo: Demonstrates creating rooms, joining, broadcasting, private messages,
+ * active users listing, and message history.
+ */
+public class ChatAppDemo {
+    public static void main(String[] args) throws InterruptedException {
+        System.out.println("Starting ChatAppDemo\n");
+
+        // Create clients with different adapters (structural pattern)
+        ChatClient alice = new ChatClient("Alice", new WebSocketAdapterFixed());
+        ChatClient bob   = new ChatClient("Bob", new HttpAdapterFixed());
+        ChatClient charlie = new ChatClient("Charlie", new WebSocketAdapterFixed());
+
+        // Clients join Room123
+        alice.joinRoom("Room123");
+        bob.joinRoom("Room123");
+        charlie.joinRoom("Room123");
+
+        // Show active users in room
+        ChatRoom room = ChatRoomManager.getInstance().getOrCreateRoom("Room123");
+        System.out.println("\nActive users in " + room.getRoomId() + ": " + room.activeUsers());
+
+        // Simulate real-time messages (we use small sleeps to make console output readable)
+        alice.sendMessage("Hello, everyone!");
+        Thread.sleep(100); // tiny delay to show message ordering
+        bob.sendMessage("How's it going?");
+        Thread.sleep(100);
+        charlie.sendMessage("Good to see you both.");
+        Thread.sleep(100);
+
+        // Private message from Alice to Bob
+        alice.sendPrivateMessage("Bob", "Hey Bob, want to pair on the task?");
+        Thread.sleep(100);
+
+        // Bob replies privately
+        bob.sendPrivateMessage("Alice", "Sure, let's do it after lunch.");
+
+        Thread.sleep(200);
+        // Show message history
+        System.out.println("\nFull history in " + room.getRoomId() + ":");
+        for (Message m : room.history()) {
+            System.out.println("  " + m);
+        }
+
+        // Charlie leaves
+        charlie.leaveRoom();
+        Thread.sleep(100);
+
+        System.out.println("\nActive users now: " + room.activeUsers());
+
+        // Alice leaves and rejoins to show history persistence
+        alice.leaveRoom();
+        Thread.sleep(100);
+        alice.joinRoom("Room123");
+        Thread.sleep(100);
+
+        System.out.println("\nDemo finished.");
+    }
+}
