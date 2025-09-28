@@ -1,0 +1,163 @@
+exp=====1
+
+
+
+// ---------- BEHAVIORAL PATTERNS ----------
+
+// Strategy Pattern: choose payment method at runtime
+interface PaymentStrategy { void pay(int amount); }
+class CreditCardPayment implements PaymentStrategy {
+    public void pay(int amount) { System.out.println("Paid ₹" + amount + " using Credit Card"); }
+}
+class UpiPayment implements PaymentStrategy {
+    public void pay(int amount) { System.out.println("Paid ₹" + amount + " using UPI"); }
+}
+class ShoppingCart {
+    private PaymentStrategy strategy;
+    public void setStrategy(PaymentStrategy strategy) { this.strategy = strategy; }
+    public void checkout(int amount) { strategy.pay(amount); }
+}
+class StrategyDemo {
+    static void run() {
+        System.out.println("\n--- Strategy Pattern ---");
+        ShoppingCart cart = new ShoppingCart();
+        cart.setStrategy(new CreditCardPayment());
+        cart.checkout(500);
+        cart.setStrategy(new UpiPayment());
+        cart.checkout(200);
+    }
+}
+
+// Observer Pattern: simple news notification
+import java.util.*;
+interface Observer { void update(String news); }
+class PhoneDisplay implements Observer {
+    public void update(String news) { System.out.println("Phone Alert: " + news); }
+}
+class TvDisplay implements Observer {
+    public void update(String news) { System.out.println("TV Flash: " + news); }
+}
+class NewsAgency {
+    private List<Observer> observers = new ArrayList<>();
+    void addObserver(Observer o) { observers.add(o); }
+    void setNews(String news) {
+        for (Observer o : observers) o.update(news);
+    }
+}
+class ObserverDemo {
+    static void run() {
+        System.out.println("\n--- Observer Pattern ---");
+        NewsAgency agency = new NewsAgency();
+        agency.addObserver(new PhoneDisplay());
+        agency.addObserver(new TvDisplay());
+        agency.setNews("Rain expected tomorrow!");
+    }
+}
+
+// ---------- CREATIONAL PATTERNS ----------
+
+// Singleton Pattern: single AppConfig instance
+class AppConfig {
+    private static AppConfig instance;
+    private AppConfig() {}
+    public static AppConfig getInstance() {
+        if (instance == null) instance = new AppConfig();
+        return instance;
+    }
+    public void show() { System.out.println("Single shared AppConfig instance"); }
+}
+class SingletonDemo {
+    static void run() {
+        System.out.println("\n--- Singleton Pattern ---");
+        AppConfig c1 = AppConfig.getInstance();
+        AppConfig c2 = AppConfig.getInstance();
+        System.out.println("Both references same? " + (c1 == c2));
+        c1.show();
+    }
+}
+
+// Factory Method Pattern: shape creation
+interface Shape { void draw(); }
+class Circle implements Shape { public void draw() { System.out.println("Drawing Circle"); } }
+class Square implements Shape { public void draw() { System.out.println("Drawing Square"); } }
+class ShapeFactory {
+    public static Shape createShape(String type) {
+        return switch (type.toLowerCase()) {
+            case "circle" -> new Circle();
+            case "square" -> new Square();
+            default -> throw new IllegalArgumentException("Unknown shape");
+        };
+    }
+}
+class FactoryDemo {
+    static void run() {
+        System.out.println("\n--- Factory Method Pattern ---");
+        Shape s1 = ShapeFactory.createShape("circle");
+        Shape s2 = ShapeFactory.createShape("square");
+        s1.draw();
+        s2.draw();
+    }
+}
+
+// ---------- STRUCTURAL PATTERNS ----------
+
+// Adapter Pattern: old socket to mobile charger
+interface MobileCharger { void chargePhone(); }
+class OldSocket { void providePower() { System.out.println("Power from old 3-pin socket"); } }
+class SocketAdapter implements MobileCharger {
+    private OldSocket oldSocket;
+    SocketAdapter(OldSocket oldSocket) { this.oldSocket = oldSocket; }
+    public void chargePhone() {
+        oldSocket.providePower();
+        System.out.println("Phone charging through adapter");
+    }
+}
+class AdapterDemo {
+    static void run() {
+        System.out.println("\n--- Adapter Pattern ---");
+        MobileCharger charger = new SocketAdapter(new OldSocket());
+        charger.chargePhone();
+    }
+}
+
+// Decorator Pattern: add milk/sugar to coffee
+interface Coffee { String getDescription(); int cost(); }
+class SimpleCoffee implements Coffee {
+    public String getDescription() { return "Plain Coffee"; }
+    public int cost() { return 50; }
+}
+abstract class CoffeeDecorator implements Coffee {
+    protected Coffee coffee;
+    CoffeeDecorator(Coffee coffee) { this.coffee = coffee; }
+}
+class MilkDecorator extends CoffeeDecorator {
+    MilkDecorator(Coffee c) { super(c); }
+    public String getDescription() { return coffee.getDescription() + ", Milk"; }
+    public int cost() { return coffee.cost() + 10; }
+}
+class SugarDecorator extends CoffeeDecorator {
+    SugarDecorator(Coffee c) { super(c); }
+    public String getDescription() { return coffee.getDescription() + ", Sugar"; }
+    public int cost() { return coffee.cost() + 5; }
+}
+class DecoratorDemo {
+    static void run() {
+        System.out.println("\n--- Decorator Pattern ---");
+        Coffee coffee = new SimpleCoffee();
+        coffee = new MilkDecorator(coffee);
+        coffee = new SugarDecorator(coffee);
+        System.out.println(coffee.getDescription() + " => ₹" + coffee.cost());
+    }
+}
+
+// ---------- MAIN DRIVER TO RUN ALL ----------
+public class MainDemo {
+    public static void main(String[] args) {
+        StrategyDemo.run();
+        ObserverDemo.run();
+        SingletonDemo.run();
+        FactoryDemo.run();
+        AdapterDemo.run();
+        DecoratorDemo.run();
+    }
+}
